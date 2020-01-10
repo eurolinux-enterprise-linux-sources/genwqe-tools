@@ -43,6 +43,12 @@
 			_a < _b ? _a : _b; })
 #endif
 
+#ifndef MAX
+#  define MAX(a,b)	({ __typeof__ (a) _a = (a); \
+			   __typeof__ (b) _b = (b); \
+			_a > _b ? _a : _b; })
+#endif
+
 #ifndef __unused
 #  define __unused __attribute__((unused))
 #endif
@@ -267,6 +273,7 @@ uLong z_crc32(uLong crc, const Bytef *buf, uInt len);
 uLong z_crc32_combine(uLong crc1, uLong crc2, z_off_t len2);
 
 const char *z_zError(int err);
+uLong z_compressBound(uLong sourceLen);
 
 /* PCIe trigger function. Writes to register 0x0 which normally non-sense. */
 void error_trigger(void);

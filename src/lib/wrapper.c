@@ -626,6 +626,9 @@ int deflateSetDictionary(z_streamp strm,
 	strm->state = w->priv_data;
 	rc = w->impl ? h_deflateSetDictionary(strm, dictionary, dictLength) :
 		       z_deflateSetDictionary(strm, dictionary, dictLength);
+	
+	pr_trace("[%p]    calculated adler32=%08x\n", strm,
+		 (unsigned int)strm->adler);
 	strm->state = (void *)w;
 
 	return rc;
@@ -808,8 +811,10 @@ uLong deflateBound(z_streamp strm, uLong sourceLen)
 	int rc;
 	struct _internal_state *w;
 
-	if (strm == NULL)
-		return Z_STREAM_ERROR;
+	if (strm == NULL) {
+		return MAX(h_deflateBound(NULL, sourceLen),
+			   z_deflateBound(NULL, sourceLen));
+	}
 
 	w = (struct _internal_state *)strm->state;
 	if (w == NULL)
@@ -845,9 +850,10 @@ int deflateEnd(z_streamp strm)
 	}
 
 	rc = __deflateEnd(strm, w);
-	free(w);
 
 	pr_trace("[%p] deflateEnd w=%p rc=%d\n", strm, w, rc);
+	free(w);
+
 	return rc;
 }
 
@@ -1302,9 +1308,10 @@ int inflateEnd(z_streamp strm)
 		free(w->dictionary);
 		w->dictionary = NULL;
 	}
-	free(w);
 
 	pr_trace("[%p] inflateEnd w=%p rc=%d\n", strm, w, rc);
+	free(w);
+
 	return rc;
 }
 
@@ -1484,6 +1491,13 @@ const char *zlibVersion(void)
 uLong zlibCompileFlags(void)
 {
 	return z_zlibCompileFlags();
+}
+
+uLong compressBound(uLong sourceLen)
+{
+	zlib_stats_inc(&zlib_stats.compressBound);
+	return MAX(h_deflateBound(NULL, sourceLen),
+			   z_deflateBound(NULL, sourceLen));
 }
 
 /*

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015, International Business Machines
+ * Copyright 2015, 2017 International Business Machines
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ struct hw_state {
  */
 static int output_buffer_empty(struct hw_state *s)
 {
-	return s->obuf_avail == s->obuf_total;
+	return (s->obuf_avail == s->obuf_total);
 }
 
 /**
@@ -99,8 +99,10 @@ static int zlib_xcheck = 1;
 static unsigned int zlib_ibuf_total = CONFIG_DEFLATE_BUF_SIZE;
 static unsigned int zlib_obuf_total = CONFIG_INFLATE_BUF_SIZE;
 
+#define ZEDC_CARDS_LENGTH 128
+
 /* Try to cache filehandles for faster access. Do not close them. */
-static zedc_handle_t zedc_cards[128 + 1];
+static zedc_handle_t zedc_cards[ZEDC_CARDS_LENGTH + 1];
 
 static zedc_handle_t __zedc_open(int card_no, int card_type, int mode,
 				 int *err_code)
@@ -112,15 +114,15 @@ static zedc_handle_t __zedc_open(int card_no, int card_type, int mode,
 				 err_code);
 
 	if (card_no == -1) {
-		if (zedc_cards[128])
-			return zedc_cards[128];
+		if (zedc_cards[ZEDC_CARDS_LENGTH])
+			return zedc_cards[ZEDC_CARDS_LENGTH];
 
-		zedc_cards[128] = zedc_open(card_no, card_type, mode,
+		zedc_cards[ZEDC_CARDS_LENGTH] = zedc_open(card_no, card_type, mode,
 					    err_code);
-		return zedc_cards[128];
+		return zedc_cards[ZEDC_CARDS_LENGTH];
 	}
 
-	if (card_no < 0 || card_no >= 128)
+	if (card_no < 0 || card_no >= ZEDC_CARDS_LENGTH)
 		return NULL;
 
 	if (zedc_cards[card_no] != NULL) {
@@ -169,9 +171,27 @@ static void stream_zlib_to_zedc(zedc_streamp h, z_streamp s)
 /**
  * Take care CRC/ADLER is correctly reported to the upper levels.
  */
-static void __fixup_crc_or_adler( z_streamp s, zedc_streamp h)
+static void __fixup_crc_or_adler(z_streamp s, zedc_streamp h)
 {
 	s->adler = (h->format == ZEDC_FORMAT_GZIP) ? h->crc32 : h->adler32;
+}
+
+/**
+ * See #152 The adler32 start value is 1 according to the specification.
+ * If there was a call to deflateSetDictionary() the adler field in s
+ * will be set to the adler32 value of the passed in dictionary.
+ * Nevertheless the data processing needs to start with a 1. This
+ * function takes are that on the 1st call of deflate when total_in
+ * is still 0, we set the start value always to 1.
+ */
+static void __prep_crc_or_adler(z_streamp s, zedc_streamp h)
+{
+	if (s->total_in == 0) {
+		if (h->format == ZEDC_FORMAT_ZLIB)
+			s->adler = 1;
+		else
+			s->adler = 0;
+	}
 }
 
 static void __free(void *ptr)
@@ -456,7 +476,10 @@ int h_deflateSetDictionary(z_streamp strm, const uint8_t *dictionary,
 	h = &s->h;
 
 	rc = zedc_deflateSetDictionary(h, dictionary, dictLength);
+	hw_trace("[%p]    adler32=%08x  dict_adler32=%08x\n", strm,
+		 h->adler32, h->dict_adler32);
 
+	strm->adler = h->dict_adler32; /* See #152 */
 	return rc_zedc_to_libz(rc);
 }
 
@@ -608,10 +631,11 @@ int h_deflate(z_streamp strm, int flush)
 		return s->rc;
 	}
 
+	__prep_crc_or_adler(strm, h);
 	hw_trace("[%p] h_deflate: flush=%s avail_in=%d avail_out=%d "
-		 "ibuf_avail=%d obuf_avail=%d\n",
+		 "ibuf_avail=%d obuf_avail=%d adler32/cr32=%08x/%08x\n",
 		 strm, flush_to_str(flush), strm->avail_in, strm->avail_out,
-		 (int)s->ibuf_avail, (int)s->obuf_avail);
+		 (int)s->ibuf_avail, (int)s->obuf_avail, h->adler32, h->crc32);
 
 	do {
 		hw_trace("[%p]   *** loop=%d flush=%s\n", strm, loops,
@@ -1178,6 +1202,38 @@ static inline int __check_stream_end(z_streamp strm)
 	unsigned int len;
 	uint8_t offs;
 
+	if (zlib_inflate_flags & ZLIB_FLAG_DISABLE_CV_FOR_Z_STREAM_END) {
+		hw_trace("[%p] ZLIB_FLAG_DISABLE_CV_FOR_Z_STREAM_END\n", strm);
+		return Z_OK;	/* No circumvention desired */
+	}
+
+	/*
+	 * Do not try this ZLIB or GZIP, were we
+	 * expect adler32 or crc32/data_size in the
+	 * stream trailer. We want the lowlevel lib to
+	 * do the checksum processing in this case.
+	 */
+	if (h->format != ZEDC_FORMAT_DEFL)
+		return Z_OK;	/* No circumvention needed */
+
+	hw_trace("[%p] CONFIG_CIRCUMVENTION_FOR_Z_STREAM_END\n", strm);
+
+	/*
+	 * fprintf(zlib_log, "SCRATCH\n");
+	 * ddcb_hexdump(zlib_log, h->wsp->tree, __in_hdr_scratch_len(h));
+	 * fprintf(zlib_log, "NEXT_IN\n");
+	 * ddcb_hexdump(zlib_log, strm->next_in, MIN(strm->avail_in,
+	 * 		(unsigned int)0x20));
+	 * fprintf(zlib_log, "in_hdr_scratch_len=%d proc_bits=%d\n",
+	 *	__in_hdr_scratch_len(h), h->proc_bits);
+	 */
+	rc = __in_hdr_bits(h);
+	if (rc != 0) {
+		hw_trace("    __in_hdr_bits %d: cannot parse "
+			 "dynamic huffman block, returning\n", rc);
+		return Z_OK;
+	}
+
 	/* Copy input data in one contignous buffer before analyzing it */
 	memset(&e, 0, sizeof(e));
 	e.state = READ_HDR;
@@ -1291,7 +1347,7 @@ static inline int __check_stream_end(z_streamp strm)
  sync_avail_in:
 	/*
 	 * Only if we saw Z_STREAM_END and no problems understanding
-	 * the empty HUFFMAN or COPY_BLOCKs arised, we sync up the
+	 * the empty HUFFMAN or COPY_BLOCKs arose, we sync up the
 	 * stream.
 	 *
 	 * For DEFLATE and ZLIB we need to read the adler32 or
@@ -1368,9 +1424,9 @@ int h_inflate(z_streamp strm, int flush)
 	/* No progress possible (no more input and no buffered output):
 	   Z_BUF_ERROR */
 	obuf_bytes = s->obuf - s->obuf_next; /* bytes in obuf */
-	if (obuf_bytes == 0) {
-		hw_trace("[%p] OBYTES_IN_DICT %d bytes\n", strm,
-			 h->obytes_in_dict);
+	if ((obuf_bytes == 0) && (zedc_inflate_pending_output(h) == 0)) {
+		hw_trace("[%p] OBYTES_IN_DICT %d bytes (1) This must be 0!\n",
+			strm, h->obytes_in_dict);
 
 		if (s->rc == Z_STREAM_END)   /* hardware saw FEOB */
 			return Z_STREAM_END; /* nothing to do anymore */
@@ -1397,76 +1453,33 @@ int h_inflate(z_streamp strm, int flush)
 		/* Give out what is already there */
 		obuf_bytes = h_flush_obuf(strm);
 
-		if ((s->rc == Z_STREAM_END) &&	/* hardware saw FEOB */
-		    (obuf_bytes == 0))		/* no more output in buf */
-			return Z_STREAM_END;	/* nothing to do anymore */
+		if ((s->rc == Z_STREAM_END) &&	/* hardware/sw saw FEOB */
+		    (obuf_bytes == 0)) {	/* no more output in buf */
+			unsigned int rem_bytes;
 
+			/* no more output in temp? */
+			rc = zedc_read_pending_output(h, strm->next_out,
+						strm->avail_out);
+			if (rc < 0) {
+				hw_trace("[%s] err: Read temp buffer rc=%d!\n",
+					__func__, rc);
+				return rc;
+			}
+
+			hw_trace("[%s] collected %d bytes from dict buffer\n",
+				__func__, rc);
+			strm->avail_out -= rc;
+			strm->total_out += rc;
+
+			rem_bytes = zedc_inflate_pending_output(h);
+			if (rem_bytes != 0)
+				return Z_OK;	/* call me again */
+
+			return Z_STREAM_END;	/* nothing to do anymore */
+		}
 		if (((obuf_bytes != 0) || zedc_inflate_pending_output(h)) &&
 		    (strm->avail_out == 0))
 			return Z_OK;		/* need new output buffer */
-
-		/*
-		 * Need more output space, just useful if Z_STREAM_END
-		 * not seen before.
-		 */
-		if ((s->rc != Z_STREAM_END) && (strm->avail_out == 0)) {
-			rc = Z_OK;
-
-#ifdef CONFIG_CIRCUMVENTION_FOR_Z_STREAM_END	/* For MongoDB PoC */
-			if (zlib_inflate_flags &
-			    ZLIB_FLAG_DISABLE_CV_FOR_Z_STREAM_END) {
-				hw_trace("[%p] ZLIB_FLAG_DISABLE_"
-					 "CV_FOR_Z_STREAM_END\n",
-					 strm);
-				goto skip_circumvention;
-			}
-
-			hw_trace("[%p] CONFIG_CIRCUMVENTION_FOR_Z_STREAM_END\n",
-				 strm);
-			/*
-			 * Do not try this ZLIB or GZIP, were we
-			 * expect adler32 or crc32/data_size in the
-			 * stream trailer. We want the lowlevel lib to
-			 * do the checksum processing in this case.
-			 */
-			if (h->format != ZEDC_FORMAT_DEFL)
-				return rc;
-			/*
-			 * fprintf(zlib_log, "SCRATCH\n");
-			 * ddcb_hexdump(zlib_log, h->wsp->tree,
-			 *	     __in_hdr_scratch_len(h));
-			 * fprintf(zlib_log, "NEXT_IN\n");
-			 * ddcb_hexdump(zlib_log, strm->next_in,
-			 *	     MIN(strm->avail_in, (unsigned int)0x20));
-			 * fprintf(zlib_log,
-			 *	"  in_hdr_scratch_len = %d\n"
-			 *	"  proc_bits = %d\n",
-			 *	__in_hdr_scratch_len(h), h->proc_bits);
-			 */
-			rc = __in_hdr_bits(h);
-			if (rc != 0) {
-				hw_trace("    __in_hdr_bits %d: cannot parse "
-					 "dynamic huffman block, returning\n",
-					 rc);
-				return Z_OK;
-			}
-
-			rc = __check_stream_end(strm);
-			if (rc == Z_STREAM_END) {
-				hw_trace("    Suppress Z_STREAM_END %ld %ld\n",
-					 s->obuf_avail, s->obuf_total);
-				s->rc = Z_STREAM_END;
-				rc = Z_OK;
-			}
-
-			hw_trace("[%p] .......... flush=%s avail_in=%d "
-				 "avail_out=%d __check_stream=%s\n", strm,
-				 flush_to_str(flush), strm->avail_in,
-				 strm->avail_out, ret_to_str(rc));
-		skip_circumvention:
-#endif
-			return rc;
-		}
 
 		/*
 		 * Original idea: Do not send 0 data to HW
@@ -1539,9 +1552,30 @@ int h_inflate(z_streamp strm, int flush)
 		    (s->rc == Z_BUF_ERROR))
 			return s->rc;
 
+#ifdef CONFIG_CIRCUMVENTION_FOR_Z_STREAM_END	/* For MongoDB PoC */
+		/* FIXME Experimental check for Z_STREAM_END here */
+		if ((s->rc != Z_STREAM_END) && (strm->avail_out == 0)) {
+			int _rc;
+
+			_rc = __check_stream_end(strm);
+			if (_rc == Z_STREAM_END) {
+				hw_trace("    Suppress Z_STREAM_END %zd %zd (2)\n",
+					 s->obuf_avail, s->obuf_total);
+				s->rc = Z_STREAM_END;
+			}
+			hw_trace("[%p] .......... flush=%s avail_in=%d "
+				 "avail_out=%d __check_stream=%s (2)\n", strm,
+				 flush_to_str(flush), strm->avail_in,
+				 strm->avail_out, ret_to_str(rc));
+		}
+#endif
 		/* Hardware saw FEOB and output buffer is empty */
-		if ((s->rc == Z_STREAM_END) && output_buffer_empty(s))
+		if ((s->rc == Z_STREAM_END) &&  output_buffer_empty(s) &&
+		    (zedc_inflate_pending_output(h) == 0)) {
+			hw_trace("[%p] OBYTES_IN_DICT %d bytes (2) Must be 0!\n",
+				strm, h->obytes_in_dict);
 			return Z_STREAM_END;	/* nothing to do anymore */
+		}
 
 		if (strm->avail_out == 0)	/* need more output space */
 			return Z_OK;
@@ -1582,7 +1616,7 @@ int h_inflateEnd(z_streamp strm)
 	ibuf_bytes = s->ibuf - s->ibuf_base;  /* accumulated input */
 	obuf_bytes = s->obuf - s->obuf_next;  /* bytes in obuf */
 	if (ibuf_bytes || obuf_bytes)
-		pr_err("[%p] In/Out buffer not empty! ibuf_bytes=%d "
+		hw_trace("[%p] In/Out buffer not empty! ibuf_bytes=%d "
 		       "obuf_bytes=%d\n", strm, ibuf_bytes, obuf_bytes);
 
 	rc = zedc_inflateEnd(h);
@@ -1671,7 +1705,7 @@ void zedc_hw_done(void)
 	if ((flags & ZLIB_FLAG_CACHE_HANDLES) == 0x0)
 		return;
 
-	for (card_no = 0; card_no <= 128; card_no++) {
+	for (card_no = 0; card_no <= ZEDC_CARDS_LENGTH; card_no++) {
 		if (zedc_cards[card_no] == NULL)
 			continue;
 		zedc_close(zedc_cards[card_no]);

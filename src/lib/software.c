@@ -29,6 +29,8 @@
 #include <dlfcn.h>
 #include <wrapper.h>
 
+#undef CONFIG_USE_ZLIB_PATH_ENV_VAR
+
 /* older zlibs might not have this */
 #ifndef z_off64_t
 #  define z_off64_t off64_t
@@ -474,9 +476,8 @@ int compress2(Bytef *dest, uLongf *destLen, const Bytef *source,
 }
 
 static uLong (* p_compressBound)(uLong sourceLen);
-uLong compressBound(uLong sourceLen)
+uLong z_compressBound(uLong sourceLen)
 {
-	zlib_stats_inc(&zlib_stats.compressBound);
 	check_sym(p_compressBound, Z_STREAM_ERROR);
 	return (* p_compressBound)(sourceLen);
 }
@@ -533,8 +534,8 @@ z_off64_t gztell64(gzFile file)
 	return (* p_gztell64)(file);
 }
 
-static z_off_t (* p_gzseek64)(gzFile file, z_off64_t offset, int whence);
-z_off_t gzseek64(gzFile file, z_off64_t offset, int whence)
+static z_off64_t (* p_gzseek64)(gzFile file, z_off64_t offset, int whence);
+z_off64_t gzseek64(gzFile file, z_off64_t offset, int whence)
 {
 	zlib_stats_inc(&zlib_stats.gzseek64);
 	check_sym(p_gzseek64, -1ll);
@@ -550,7 +551,7 @@ z_off_t gzoffset(gzFile file)
 }
 
 static z_off64_t (* p_gzoffset64)(gzFile file);
-z_off_t gzoffset64(gzFile file)
+z_off64_t gzoffset64(gzFile file)
 {
 	zlib_stats_inc(&zlib_stats.gzoffset64);
 	check_sym(p_gzoffset64, -1ll);
@@ -594,9 +595,19 @@ const z_crc_t *get_crc_table()
 void zedc_sw_init(void)
 {
 	char *error;
+
+#ifdef CONFIG_USE_ZLIB_PATH_ENV_VAR
 	const char *zlib_path = getenv("ZLIB_PATH");
 
 	/* User has setup environment variable to find libz.so.1 */
+	/*
+	 * This should be for debugging only. We got a report that
+	 * this mechanism is critical from a security perspective,
+	 * since it allows to execute arbitrary code if being misused.
+	 *
+	 * See also:
+	 *   https://github.com/ibm-genwqe/genwqe-user/issues/156
+	 */
 	if (zlib_path != NULL) {
 		sw_trace("Loading software zlib \"%s\"\n", zlib_path);
 		dlerror();
@@ -604,6 +615,7 @@ void zedc_sw_init(void)
 		if (handle != NULL)
 			goto load_syms;
 	}
+#endif
 
 	/* We saw dlopen returning non NULL value in case of passing ""! */
 	if (strcmp(CONFIG_ZLIB_PATH, "") == 0) {
@@ -621,7 +633,9 @@ void zedc_sw_init(void)
 		return;
 	}
 
+#ifdef CONFIG_USE_ZLIB_PATH_ENV_VAR
 load_syms:
+#endif
 	register_sym(zlibVersion);
 
 	sw_trace("  ZLIB_VERSION=%s (header) zlibVersion()=%s (code)\n",

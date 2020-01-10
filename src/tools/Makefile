@@ -20,6 +20,10 @@ DESTDIR ?= /usr
 libs = ../lib/libDDCB.a ../lib/libzHW.a ../lib/libcard.a
 LDLIBS += $(libs) -lpthread -lrt
 
+ifeq ($(BUILD_AGZIP_TOOLS),1)
+LDLIBS += -ljson-c
+endif
+
 genwqe_peek_objs = force_cpu.o
 genwqe_poke_objs = force_cpu.o
 genwqe_memcopy_objs = force_cpu.o
@@ -42,6 +46,11 @@ projs = genwqe_update genwqe_gzip genwqe_gunzip zlib_mt_perf genwqe_memcopy \
 ifdef WITH_LIBCXL
 # genwqe_maint is only used with CAPI support.
 projs += genwqe_maint genwqe_loadtree
+
+ifeq ($(BUILD_AGZIP_TOOLS),1)
+projs += agzipd ag_uptime
+endif
+
 CAPI_INSTALL=capi_install
 
 # If we are bundling, we need to link statically.  Otherwise, go dynamic.
@@ -62,7 +71,9 @@ $(projs): $(libs)
 
 objs = force_cpu.o genwqe_vpd_common.o $(projs:=.o)
 
-manpages = $(projs:=.1.gz)
+test_scripts = genwqe_mt_perf genwqe_test_gz
+
+manpages = $(projs:=.1.gz) $(test_scripts:=.1.gz)
 
 manpages: all $(manpages)
 
@@ -83,6 +94,7 @@ genwqe_gunzip.o: genwqe_gzip.c
 ### Setting LD_LIBRARY_PATH helps to try tools with dynamic linkage
 %.1: %
 	LD_LIBRARY_PATH=../lib $(HELP2MAN) -N --output=$@ \
+		--help-option='-h' --version-option='-V' \
 		--name "IBM Hardware Accelerator Tool." ./$<
 
 %.1.gz: %.1

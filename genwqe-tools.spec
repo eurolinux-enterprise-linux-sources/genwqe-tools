@@ -20,23 +20,22 @@
 # dependency to the spec file. We want to have a zlib-devel installed.
 #
 
-Summary:	GenWQE userspace tools
-Name:		genwqe-tools
-Version:	4.0.18
-Release:	6%{?dist}
-License:	ASL 2.0
-URL:		https://github.com/ibm-genwqe/genwqe-user/
+%global _hardened_build 1
+
+Summary: GenWQE userspace tools
+Name: genwqe-tools
+Version: 4.0.20
+Release: 3%{?dist}
+License: ASL 2.0
+URL: https://github.com/ibm-genwqe/genwqe-user/
 BuildRequires: zlib-devel >= 1.2.7
 BuildRequires: help2man
 %ifarch %{power64}
 BuildRequires: libcxl-devel
 %endif
-Source0:	https://github.com/ibm-genwqe/genwqe-user/archive/v%{version}.tar.gz
-Patch0:		genwqe-user-4.0.18-config.patch
-Patch1:		genwqe-user-4.0.18-fix-32-bits-arch.patch
-Patch2:		genwqe-user-4.0.18-upstream.patch
-Patch3:		genwqe-user-4.0.18-disable-user-zlibpath.patch
-Patch4:		genwqe-user-4.0.18-fix-for-genweq_chksum.patch
+Source0: https://github.com/ibm-genwqe/genwqe-user/archive/v%{version}.tar.gz
+Patch0: genwqe-user-4.0.18-install-gzFile_test.patch
+Requires: genwqe-zlib = %{version}-%{release}
 
 %description
 Provide a suite of utilities to manage and configure the IBM GenWQE card.
@@ -71,12 +70,12 @@ developing applications that use %{name}.
 %autosetup -p1 -n genwqe-user-%{version}
 
 %build
-
-make %{?_smp_mflags} LDFLAGS="-Wl,-z,relro -Wl,-z,now" tools lib VERSION=%{version} CONFIG_ZLIB_PATH=%{_libdir}/libz.so
+LDFLAGS="%{__global_ldflags}" CFLAGS="%{optflags}" make %{?_smp_mflags} tools lib \
+ VERSION=%{version} CONFIG_ZLIB_PATH=%{_libdir}/libz.so V=2
 
 %install
 make %{?_smp_mflags} install DESTDIR=%{buildroot}/%{_prefix} \
-    VERSION=%{version} SYSTEMD_UNIT_DIR=%{buildroot}/%{_unitdir} \
+    SYSTEMD_UNIT_DIR=%{buildroot}/%{_unitdir} \
     LIB_INSTALL_PATH=%{buildroot}/%{_libdir}/genwqe \
     INCLUDE_INSTALL_PATH=%{buildroot}/%{_includedir}/genwqe
 
@@ -101,7 +100,7 @@ rmdir %{buildroot}%{_libdir}/genwqe/
 %{_bindir}/genwqe_peek
 %{_bindir}/genwqe_poke
 %{_bindir}/genwqe_update
-
+%{_bindir}/gzFile_test
 %{_bindir}/genwqe_gunzip
 %{_bindir}/genwqe_gzip
 %{_bindir}/genwqe_test_gz
@@ -120,7 +119,7 @@ rmdir %{buildroot}%{_libdir}/genwqe/
 %{_mandir}/man1/zlib_mt_perf.1*
 %{_mandir}/man1/genwqe_test_gz.1*
 %{_mandir}/man1/genwqe_mt_perf.1*
-%exclude %{_mandir}/man1/gzFile_test.1*
+%{_mandir}/man1/gzFile_test.1*
 
 %ifarch %{power64}
 %{_bindir}/genwqe_maint
@@ -153,6 +152,15 @@ rmdir %{buildroot}%{_libdir}/genwqe/
 %{_libdir}/*.a
 
 %changelog
+* Wed May 23 2018 Than Ngo <than@redhat.com> - 4.0.20-3
+- Related: bz#1521050, add explicit package version requirement
+
+* Fri May 18 2018 Than Ngo <than@redhat.com> - 4.0.20-2
+- Related: bz#1521050, fix rpmdiff issue
+
+* Thu May 17 2018 Than Ngo <than@redhat.com> - 4.0.20-1
+- Resolves: bz#1521050, update to 4.0.20
+
 * Tue Jan 09 2018 Than Ngo <than@redhat.com> - - 4.0.18-6
 - Related: bz#1532269, add -Wl,-z,relro to the linker flags in order to fix a rpmdiff
 

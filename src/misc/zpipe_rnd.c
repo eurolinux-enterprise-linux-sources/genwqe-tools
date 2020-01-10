@@ -48,8 +48,8 @@ static unsigned int CHUNK_o = 4 * 1024 * 1024; /* 16384; */
    level is supplied, Z_VERSION_ERROR if the version of zlib.h and the
    version of the library linked do not match, or Z_ERRNO if there is
    an error reading or writing the files. */
-static int def(FILE *source, FILE *dest, int level, int windowBits,
-	       uint8_t *dictionary, int dictLength)
+static int def(FILE *source, FILE *dest, int level, int strategy,
+	       int windowBits, uint8_t *dictionary, int dictLength)
 {
 	int ret, flush;
 	unsigned have;
@@ -64,22 +64,30 @@ static int def(FILE *source, FILE *dest, int level, int windowBits,
 		return Z_ERRNO;
 
 	out = malloc(CHUNK_o);
-	if (out == NULL)
+	if (out == NULL) {
+		free(in);
 		return Z_ERRNO;
+	}
 
 	/* allocate deflate state */
 	strm.zalloc = Z_NULL;
 	strm.zfree = Z_NULL;
 	strm.opaque = Z_NULL;
 	ret = deflateInit2(&strm, level, Z_DEFLATED, windowBits, 8,
-			   Z_DEFAULT_STRATEGY);
-	if (ret != Z_OK)
+			   strategy);
+	if (ret != Z_OK) {
+		free(in);
+		free(out);
 		return ret;
+	}
 
 	if (dictLength > 0) {
 		ret = deflateSetDictionary(&strm, dictionary, dictLength);
-		if (ret != Z_OK)
+		if (ret != Z_OK) {
+			free(in);
+			free(out);
 			return ret;
+		}
 	}
 
 	/* compress until end of file */
@@ -152,8 +160,10 @@ static int inf(FILE *source, FILE *dest, int windowBits,
 		return Z_ERRNO;
 
 	out = malloc(CHUNK_o);
-	if (out == NULL)
+	if (out == NULL) {
+		free(in);
 		return Z_ERRNO;
+	}
 
 	/* allocate inflate state */
 	strm.zalloc = Z_NULL;
@@ -163,14 +173,20 @@ static int inf(FILE *source, FILE *dest, int windowBits,
 	strm.next_in = Z_NULL;
 
 	ret = inflateInit2(&strm, windowBits);
-	if (ret != Z_OK)
+	if (ret != Z_OK) {
+		free(in);
+		free(out);
 		return ret;
+	}
 
 	if (!((windowBits >= 8) && (windowBits <= 15)) &&  /* !ZLIB */
 	    (dictLength > 0)) {
 		ret = inflateSetDictionary(&strm, dictionary, dictLength);
-		if (ret != Z_OK)
+		if (ret != Z_OK) {
+			free(in);
+			free(out);
 			return ret;
+		}
 	}
 
 	/* decompress until deflate stream ends or end of file */
@@ -216,6 +232,10 @@ static int inf(FILE *source, FILE *dest, int windowBits,
 					}
 					goto try_again;	/* try again */
 				}
+				(void)inflateEnd(&strm);
+				free(in);
+				free(out);
+				return ret;
 			case Z_DATA_ERROR: /* and fall through */
 			case Z_MEM_ERROR:
 				(void)inflateEnd(&strm);
@@ -306,6 +326,8 @@ static void usage(char *prog)
 
 	fprintf(stderr, "%s usage: %s [-d, --decompress]\n"
 		"    [-F, --format <ZLIB|DEFLATE|GZIP>]\n"
+		"    [-S, --strategy <0..4>] 0: DEFAULT,\n"
+		"      1: FILTERED, 2: HUFFMAN_ONLY, 3: RLE, 4: FIXED\n"
 		"    [-r, --rnd\n"		
 		"    [-s, --seed <seed>\n"		
 		"    [-1, --fast]\n"
@@ -369,6 +391,7 @@ int main(int argc, char **argv)
 	int dictLength = 0;
 	int windowBits;
 	int level = Z_DEFAULT_COMPRESSION;
+	int strategy = Z_DEFAULT_STRATEGY;
 
 	/* avoid end-of-line conversions */
 	SET_BINARY_MODE(stdin);
@@ -379,6 +402,7 @@ int main(int argc, char **argv)
 		int option_index = 0;
 		static struct option long_options[] = {
 			{ "decompress",  no_argument,       NULL, 'd' },
+			{ "strategy",	 required_argument, NULL, 'S' },
 			{ "format",	 required_argument, NULL, 'F' },
 			{ "fast",        no_argument,       NULL, '1' },
 			{ "default",     no_argument,       NULL, '6' },
@@ -393,7 +417,7 @@ int main(int argc, char **argv)
 			{ 0,		 no_argument,       NULL, 0   },
 		};
 
-		ch = getopt_long(argc, argv, "169D:F:rs:i:o:dvh?",
+		ch = getopt_long(argc, argv, "169D:F:rs:i:o:S:dvh?",
 				 long_options, &option_index);
 		if (ch == -1)    /* all params processed ? */
 			break;
@@ -427,6 +451,9 @@ int main(int argc, char **argv)
 		case 's':
 			seed = str_to_num(optarg);
 			break;
+		case 'S':
+			strategy = str_to_num(optarg);
+			break;
 		case 'i':
 			CHUNK_i = str_to_num(optarg);
 			break;
@@ -447,7 +474,8 @@ int main(int argc, char **argv)
 
 	/* do compression if no arguments */
 	if (compress == 1) {
-		ret = def(stdin, stdout, level, windowBits, dictionary, dictLength);
+		ret = def(stdin, stdout, level, strategy,
+			  windowBits, dictionary, dictLength);
 		if (ret != Z_OK)
 			zerr(ret);
 		return ret;

@@ -42,7 +42,7 @@
 #  define SET_BINARY_MODE(file)
 #endif
 
-/* FIXME Fake this for old RHEL verions e.g. RHEL5.6 */
+/* FIXME Fake this for old RHEL versions e.g. RHEL5.6 */
 #ifndef CPU_ALLOC
 #define	  CPU_ALLOC(cpus)		      ({ void *ptr = NULL; ptr; })
 #define	  CPU_ALLOC_SIZE(cpus)		      ({ int val = 0; val; })
@@ -54,7 +54,7 @@
 #define	  sched_setaffinity(x, size, cpusetp) ({ int val = 0; val; })
 #endif
 
-/* FIXME Fake this for old RHEL verions e.g. RHEL5.6 */
+/* FIXME Fake this for old RHEL versions e.g. RHEL5.6 */
 #ifndef CLOCK_MONOTONIC_RAW
 #define   clock_gettime(clk_id, tp) ({ int val = 0; val; })
 #endif
@@ -370,7 +370,12 @@ static int inf(struct thread_data *d, FILE *source, FILE *dest,
 			/* assert(ret != Z_STREAM_ERROR); *//* not clobbered */
 			switch (ret) {
 			case Z_NEED_DICT:
-				ret = Z_DATA_ERROR;	/* and fall through */
+				(void)inflateEnd(&strm);
+				if (!pre_alloc_memory) {
+					__free(in);
+					__free(out);
+				}
+				return Z_DATA_ERROR;
 			case Z_STREAM_ERROR:
 			case Z_DATA_ERROR:
 			case Z_MEM_ERROR:

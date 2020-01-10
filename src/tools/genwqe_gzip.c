@@ -227,7 +227,7 @@ __more_inf:
 				break;
 			case Z_NEED_DICT:
 				fprintf(stderr, "NEED Dict........\n");
-				ret = Z_DATA_ERROR;	/* and fall through */
+				return Z_DATA_ERROR;
 			case Z_DATA_ERROR:
 			case Z_MEM_ERROR:
 				fprintf(stderr, "Fault..... %d\n", ret);
@@ -310,7 +310,7 @@ static inline uint64_t str_to_num(char *str)
 
 static void userinfo(FILE *fp, char *prog, const char *version)
 {
-	fprintf(fp, "%s %s\n(c) Copyright IBM Corp. 2015\n",
+	fprintf(fp, "%s %s\n(c) Copyright IBM Corp. 2015, 2017\n",
 		basename(prog), version);
 }
 
@@ -321,6 +321,15 @@ static void print_args(FILE *fp, int argc, char **argv)
 	fprintf(fp, "Called with:\n");
 	for (i = 0; i < argc; i++)
 		fprintf(fp, "  ARGV[%d]: \"%s\"\n", i, argv[i]);
+	fprintf(fp, "\n");
+}
+
+static void print_version(FILE *fp)
+{
+	fprintf(fp, "Code: zlibVersion()=%s Header: ZLIB_VERSION=%s %s\n\n",
+		zlibVersion(), ZLIB_VERSION,
+		strcmp(zlibVersion(), ZLIB_VERSION) == 0 ?
+		"consistent" : "inconsistent");
 }
 
 static void usage(FILE *fp, char *prog, int argc, char *argv[])
@@ -363,15 +372,15 @@ static void usage(FILE *fp, char *prog, int argc, char *argv[])
 		"Report bugs via https://github.com/ibm-genwqe/genwqe-user.\n"
 		"\n", prog, CHUNK_i/1024, CHUNK_o/1024);
 
+	print_version(fp);
 	print_args(fp, argc, argv);
 }
 
 static inline void hexdump(FILE *fp, const void *buff, unsigned int size)
 {
-	unsigned int i;
+	unsigned int i, j = 0;
 	const uint8_t *b = (uint8_t *)buff;
 	char ascii[17];
-	char str[2] = { 0x0, };
 
 	if (size == 0)
 		return;
@@ -379,12 +388,11 @@ static inline void hexdump(FILE *fp, const void *buff, unsigned int size)
 	for (i = 0; i < size; i++) {
 		if ((i & 0x0f) == 0x00) {
 			fprintf(fp, " %08x:", i);
-			memset(ascii, 0, sizeof(ascii));
+			memset(ascii, '\0', sizeof(ascii));
+			j = 0;
 		}
 		fprintf(fp, " %02x", b[i]);
-		str[0] = isalnum(b[i]) ? b[i] : '.';
-		str[1] = '\0';
-		strncat(ascii, str, sizeof(ascii) - 1);
+		ascii[j++] = isalnum(b[i]) ? b[i] : '.';
 
 		if ((i & 0x0f) == 0x0f)
 			fprintf(fp, " | %s\n", ascii);
@@ -393,9 +401,7 @@ static inline void hexdump(FILE *fp, const void *buff, unsigned int size)
 	/* print trailing up to a 16 byte boundary. */
 	for (; i < ((size + 0xf) & ~0xf); i++) {
 		fprintf(fp, "   ");
-		str[0] = ' ';
-		str[1] = '\0';
-		strncat(ascii, str, sizeof(ascii) - 1);
+		ascii[j++] = ' ';
 
 		if ((i & 0x0f) == 0x0f)
 			fprintf(fp, " | %s\n", ascii);
