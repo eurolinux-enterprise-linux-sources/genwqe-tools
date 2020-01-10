@@ -23,7 +23,7 @@
 Summary:	GenWQE userspace tools
 Name:		genwqe-tools
 Version:	4.0.18
-Release:	2%{?dist}
+Release:	6%{?dist}
 License:	ASL 2.0
 URL:		https://github.com/ibm-genwqe/genwqe-user/
 BuildRequires: zlib-devel >= 1.2.7
@@ -31,9 +31,12 @@ BuildRequires: help2man
 %ifarch %{power64}
 BuildRequires: libcxl-devel
 %endif
-Source0: https://github.com/ibm-genwqe/genwqe-user/archive/v%{version}.tar.gz
+Source0:	https://github.com/ibm-genwqe/genwqe-user/archive/v%{version}.tar.gz
 Patch0:		genwqe-user-4.0.18-config.patch
 Patch1:		genwqe-user-4.0.18-fix-32-bits-arch.patch
+Patch2:		genwqe-user-4.0.18-upstream.patch
+Patch3:		genwqe-user-4.0.18-disable-user-zlibpath.patch
+Patch4:		genwqe-user-4.0.18-fix-for-genweq_chksum.patch
 
 %description
 Provide a suite of utilities to manage and configure the IBM GenWQE card.
@@ -69,20 +72,13 @@ developing applications that use %{name}.
 
 %build
 
-make %{?_smp_mflags} tools lib VERSION=%{version} CONFIG_ZLIB_PATH=%{_libdir}/libz.so
+make %{?_smp_mflags} LDFLAGS="-Wl,-z,relro -Wl,-z,now" tools lib VERSION=%{version} CONFIG_ZLIB_PATH=%{_libdir}/libz.so
 
 %install
 make %{?_smp_mflags} install DESTDIR=%{buildroot}/%{_prefix} \
     VERSION=%{version} SYSTEMD_UNIT_DIR=%{buildroot}/%{_unitdir} \
     LIB_INSTALL_PATH=%{buildroot}/%{_libdir}/genwqe \
     INCLUDE_INSTALL_PATH=%{buildroot}/%{_includedir}/genwqe
-
-# create manpages
-for f in genwqe_mt_perf genwqe_test_gz ; do
-    help2man --help-option="-h" --version-string="%{vesion}" -N \
-             --output=%{buildroot}%{_mandir}/man1/$f.1 \
-             --name "IBM Hardware Accelerator Tool." tools/$f
-done
 
 # move genwqe_vpd.csv to expected location.
 mkdir -p %{buildroot}/%{_sysconfdir}/
@@ -157,6 +153,18 @@ rmdir %{buildroot}%{_libdir}/genwqe/
 %{_libdir}/*.a
 
 %changelog
+* Tue Jan 09 2018 Than Ngo <than@redhat.com> - - 4.0.18-6
+- Related: bz#1532269, add -Wl,-z,relro to the linker flags in order to fix a rpmdiff
+
+* Mon Jan 08 2018 Than Ngo <than@redhat.com> - 4.0.18-5
+- Resolves: bz#1532269, fixed genwqe_cksum when failed causes EEH
+
+* Fri Nov 17 2017 Than Ngo <than@redhat.com> - 4.0.18-4
+- Resolves: bz#1513837, fixed potential arbitrary code execution bug
+
+* Thu Oct 12 2017 Than Ngo <than@redhat.com> - 4.0.18-3
+- Resolves: bz#1456492, add backported patches from 4.0.19 branch
+
 * Tue Apr 04 2017 Rafael Fonseca <rdossant@redhat.com> - 4.0.18-2
 - Remove dynamically linked test binary.
 
