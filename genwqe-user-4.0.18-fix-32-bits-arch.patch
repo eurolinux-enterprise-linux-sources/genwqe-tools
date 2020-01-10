@@ -1,0 +1,35 @@
+diff -up genwqe-user-4.0.18/lib/hardware.c.than genwqe-user-4.0.18/lib/hardware.c
+--- genwqe-user-4.0.18/lib/hardware.c.than	2017-03-13 14:17:31.020262652 +0100
++++ genwqe-user-4.0.18/lib/hardware.c	2017-03-13 14:17:50.930509139 +0100
+@@ -1453,7 +1453,7 @@ int h_inflate(z_streamp strm, int flush)
+ 
+ 			rc = __check_stream_end(strm);
+ 			if (rc == Z_STREAM_END) {
+-				hw_trace("    Suppress Z_STREAM_END %ld %ld\n",
++				hw_trace("    Suppress Z_STREAM_END %zd %zd\n",
+ 					 s->obuf_avail, s->obuf_total);
+ 				s->rc = Z_STREAM_END;
+ 				rc = Z_OK;
+diff -up genwqe-user-4.0.18/lib/software.c.than genwqe-user-4.0.18/lib/software.c
+--- genwqe-user-4.0.18/lib/software.c.than	2017-03-13 14:15:54.630910546 +0100
++++ genwqe-user-4.0.18/lib/software.c	2017-03-13 14:34:12.460362752 +0100
+@@ -533,8 +533,8 @@ z_off64_t gztell64(gzFile file)
+ 	return (* p_gztell64)(file);
+ }
+ 
+-static z_off_t (* p_gzseek64)(gzFile file, z_off64_t offset, int whence);
+-z_off_t gzseek64(gzFile file, z_off64_t offset, int whence)
++static z_off64_t (* p_gzseek64)(gzFile file, z_off64_t offset, int whence);
++z_off64_t gzseek64(gzFile file, z_off64_t offset, int whence)
+ {
+ 	zlib_stats_inc(&zlib_stats.gzseek64);
+ 	check_sym(p_gzseek64, -1ll);
+@@ -550,7 +550,7 @@ z_off_t gzoffset(gzFile file)
+ }
+ 
+ static z_off64_t (* p_gzoffset64)(gzFile file);
+-z_off_t gzoffset64(gzFile file)
++z_off64_t gzoffset64(gzFile file)
+ {
+ 	zlib_stats_inc(&zlib_stats.gzoffset64);
+ 	check_sym(p_gzoffset64, -1ll);
